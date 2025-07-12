@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Optional, List
 
 
 class Settings(BaseSettings):
@@ -12,16 +12,25 @@ class Settings(BaseSettings):
     port: int = 8000
     debug: bool = False
     
-    # BERT模型配置
-    model_name: str = "dennlinger/bert-wiki-paragraphs"
+    # 模型配置
+    model_name: str = "dennlinger/bert-wiki-paragraphs"  # 原BERT模型
+    enhanced_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"  # 增强模型
     model_cache_dir: Optional[str] = None
     max_length: int = 512
+    use_enhanced_segmenter: bool = True  # 是否使用增强版分段器
     
     # 分段配置
     threshold: float = 0.5
     min_paragraph_length: int = 50
     max_paragraph_length: int = 500
     separator: str = "\n\n"
+    
+    # 增强分段配置
+    enable_auto_threshold: bool = True  # 启用自动阈值调整
+    multi_scale_windows: List[int] = [1, 3, 5]  # 多尺度窗口大小
+    smoothing_sigma: float = 1.0  # 相似度平滑参数
+    enable_structure_hints: bool = True  # 启用结构提示检测
+    enable_hierarchical_output: bool = True  # 启用层次化输出
     
     # 文件处理配置
     max_file_size_mb: int = 50  # 同步处理最大文件大小

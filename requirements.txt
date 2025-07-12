@@ -9,6 +9,7 @@ pydantic-settings>=2.0.0
 # 文本处理
 jieba>=0.42.1
 nltk>=3.8
+sentence-transformers>=2.2.0
 
 # 开发和测试
 pytest>=7.0.0

@@ -11,10 +11,13 @@ from src.api.models import (
     SegmentationRequest, SegmentationResponse, ErrorResponse,
     HealthResponse, ConfigRequest, ConfigResponse, QualityMetrics,
     MarkdownUploadRequest, MarkdownProcessingResponse, MarkdownProcessingStats,
-    FileUploadErrorResponse, ProcessingStatusResponse
+    FileUploadErrorResponse, ProcessingStatusResponse,
+    EnhancedSegmentationRequest, EnhancedSegmentationResponse, HierarchicalParagraph,
+    EnhancedQualityMetrics
 )
-from src.core.semantic_segmenter import SemanticSegmenter
-from src.core.bert_model import BERTModel
+from src.core.enhanced_semantic_segmenter import EnhancedSemanticSegmenter
+from src.core.sentence_transformer_model import SentenceTransformerModel
+from src.core.text_type_detector import TextTypeDetector
 from src.utils.text_processor import TextProcessor
 from src.core.chunk_processor import ChunkProcessor
 from config.settings import settings
@@ -24,7 +27,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # 全局变量
-segmenter = None
+segmenter = None  # 现在指向增强版分段器
 chunk_processor = None
 startup_time = None
 
@@ -35,23 +38,25 @@ async def lifespan(app: FastAPI):
     global segmenter, chunk_processor, startup_time
     
     # 启动时初始化
-    logger.info("正在启动语义分段服务...")
+    logger.info("正在启动增强版语义分段服务...")
     startup_time = time.time()
     
     try:
-        # 初始化组件
-        bert_model = BERTModel()
+        # 初始化增强版组件
+        logger.info("正在初始化增强版分段器...")
         text_processor = TextProcessor()
-        segmenter = SemanticSegmenter(bert_model, text_processor)
+        sentence_model = SentenceTransformerModel(settings.enhanced_model_name)
+        type_detector = TextTypeDetector()
+        segmenter = EnhancedSemanticSegmenter(sentence_model, text_processor, type_detector)
         
-        # 初始化分块处理器
-        chunk_processor = ChunkProcessor(segmenter)
+        # 预加载增强模型
+        logger.info("正在预加载Sentence Transformer模型...")
+        segmenter.model.load_model()
         
-        # 预加载模型
-        logger.info("正在预加载BERT模型...")
-        segmenter.bert_model.load_model()
+        # 初始化分块处理器（暂时使用传统方式，后续可以适配增强版）
+        chunk_processor = ChunkProcessor(None)  # 需要后续适配
         
-        logger.info("语义分段服务启动成功")
+        logger.info("增强版语义分段服务启动成功")
         yield
         
     except Exception as e:
@@ -69,7 +74,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="基于BERT的语义分段服务API",
+    description="基于Sentence Transformer的增强版语义分段服务API",
     lifespan=lifespan
 )
 
@@ -86,10 +91,10 @@ app.add_middleware(
 )
 
 
-def get_segmenter() -> SemanticSegmenter:
-    """获取分段器实例"""
+def get_segmenter() -> EnhancedSemanticSegmenter:
+    """获取增强版分段器实例"""
     if segmenter is None:
-        raise HTTPException(status_code=503, detail="服务尚未初始化完成")
+        raise HTTPException(status_code=503, detail="分段器尚未初始化完成")
     return segmenter
 
 
@@ -154,10 +159,10 @@ async def api_info():
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check(seg: SemanticSegmenter = Depends(get_segmenter)):
+async def health_check(seg: EnhancedSemanticSegmenter = Depends(get_segmenter)):
     """健康检查"""
     try:
-        model_info = seg.bert_model.get_model_info()
+        model_info = seg.model.get_model_info()
         uptime = time.time() - startup_time if startup_time else 0
         
         return HealthResponse(
@@ -174,37 +179,35 @@ async def health_check(seg: SemanticSegmenter = Depends(get_segmenter)):
 @app.post("/segment", response_model=SegmentationResponse)
 async def segment_text(
     request: SegmentationRequest,
-    seg: SemanticSegmenter = Depends(get_segmenter)
+    seg: EnhancedSemanticSegmenter = Depends(get_segmenter)
 ):
     """
-    文本语义分段
+    文本语义分段（使用增强版算法）
     
     对输入的文本进行语义分析，自动分割成语义连贯的段落。
+    现在使用增强版Sentence Transformer算法，提供更好的分段效果。
     """
     start_time = time.time()
     
     try:
-        # 如果请求中指定了阈值，临时设置
-        original_threshold = seg.threshold
+        # 构建增强版配置
+        custom_config = {}
         if request.threshold is not None:
-            seg.set_threshold(request.threshold)
+            custom_config["threshold"] = request.threshold
         
-        # 执行分段
-        result = seg.segment_text(request.text)
-        
-        # 恢复原始阈值
-        if request.threshold is not None:
-            seg.set_threshold(original_threshold)
+        # 执行增强版分段
+        result = seg.segment_text_enhanced(request.text, custom_config)
         
         # 检查分段结果
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
         
+        # 将增强版结果适配为原始格式
+        paragraphs = [para["text"] for para in result["paragraphs"]]
+        
         # 格式化输出
         separator = request.separator or settings.separator
-        formatted_text = seg.text_processor.format_output(
-            result["paragraphs"], separator
-        )
+        formatted_text = seg.text_processor.format_output(paragraphs, separator)
         
         # 构建质量指标
         quality_data = result.get("quality", {})
@@ -222,7 +225,7 @@ async def segment_text(
         
         return SegmentationResponse(
             success=True,
-            paragraphs=result["paragraphs"],
+            paragraphs=paragraphs,
             formatted_text=formatted_text,
             sentence_count=result.get("sentence_count", 0),
             boundary_count=result.get("boundary_count", 0),
@@ -240,16 +243,114 @@ async def segment_text(
         )
 
 
+@app.post("/segment-enhanced", response_model=EnhancedSegmentationResponse)
+async def segment_text_enhanced(
+    request: EnhancedSegmentationRequest,
+    seg: EnhancedSemanticSegmenter = Depends(get_segmenter)
+):
+    """
+    增强版文本语义分段
+    
+    提供更智能的语义分析，支持文本类型自动检测、动态阈值调整、
+    层次化输出和关键短语提取，特别针对RAG场景优化。
+    """
+    start_time = time.time()
+    
+    try:
+        # 构建自定义配置
+        custom_config = {}
+        
+        if request.threshold is not None:
+            custom_config["threshold"] = request.threshold
+            
+        if request.enable_auto_threshold is not None:
+            custom_config["enable_auto_threshold"] = request.enable_auto_threshold
+            
+        if request.enable_structure_hints is not None:
+            custom_config["use_structure_hints"] = request.enable_structure_hints
+            
+        if request.enable_hierarchical_output is not None:
+            custom_config["hierarchical_output"] = request.enable_hierarchical_output
+        
+        # 强制文本类型（如果指定）
+        if request.force_text_type:
+            # 这里可以通过修改类型检测结果来实现
+            # 暂时先记录，后续在分段器中实现
+            custom_config["force_text_type"] = request.force_text_type
+        
+        # 执行增强版分段
+        result = seg.segment_text_enhanced(request.text, custom_config)
+        
+        # 检查分段结果
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        
+        # 构建层次化段落列表
+        hierarchical_paragraphs = []
+        for para in result["paragraphs"]:
+            hierarchical_paragraphs.append(HierarchicalParagraph(
+                text=para["text"],
+                type=para["type"],
+                level=para["level"],
+                length=para["length"],
+                sentence_count=para["sentence_count"],
+                start_idx=para["start_idx"],
+                end_idx=para["end_idx"],
+                key_phrases=para["key_phrases"]
+            ))
+        
+        # 构建增强版质量指标
+        quality_data = result.get("quality", {})
+        enhanced_quality = EnhancedQualityMetrics(
+            paragraph_count=quality_data.get("paragraph_count", 0),
+            avg_length=quality_data.get("avg_length", 0.0),
+            length_std=quality_data.get("length_std", 0.0),
+            avg_sentence_count=quality_data.get("avg_sentence_count", 0.0),
+            too_short_count=quality_data.get("too_short_count", 0),
+            too_long_count=quality_data.get("too_long_count", 0),
+            semantic_consistency=quality_data.get("semantic_consistency", 0.0),
+            structure_score=quality_data.get("structure_score", 0.0),
+            type_distribution=quality_data.get("type_distribution", {}),
+            quality_score=quality_data.get("quality_score", 0.0)
+        )
+        
+        processing_time = time.time() - start_time
+        
+        return EnhancedSegmentationResponse(
+            success=True,
+            paragraphs=hierarchical_paragraphs,
+            text_type=result.get("text_type", "unknown"),
+            type_confidence=result.get("type_confidence", 0.0),
+            config_used=result.get("config_used", {}),
+            sentence_count=result.get("sentence_count", 0),
+            boundary_count=result.get("boundary_count", 0),
+            multi_scale_info=result.get("multi_scale_info", {}),
+            quality=enhanced_quality,
+            processing_time=processing_time
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"增强版分段处理失败: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"增强版分段处理失败: {str(e)}"
+        )
+
+
 @app.get("/config", response_model=ConfigResponse)
-async def get_config(seg: SemanticSegmenter = Depends(get_segmenter)):
+async def get_config(seg: EnhancedSemanticSegmenter = Depends(get_segmenter)):
     """获取当前配置"""
     try:
         current_config = {
-            "threshold": seg.threshold,
-            "min_paragraph_length": seg.min_paragraph_length,
-            "max_paragraph_length": seg.max_paragraph_length,
-            "model_name": seg.bert_model.model_name,
-            "device": seg.bert_model.device
+            "threshold": seg.default_config.get("threshold", settings.threshold),
+            "min_paragraph_length": seg.default_config.get("min_paragraph_length", settings.min_paragraph_length),
+            "max_paragraph_length": seg.default_config.get("max_paragraph_length", settings.max_paragraph_length),
+            "window_size": seg.default_config.get("window_size", 3),
+            "model_name": seg.model.model_name,
+            "device": seg.model.device,
+            "use_structure_hints": seg.default_config.get("use_structure_hints", False)
         }
         
         return ConfigResponse(
@@ -265,7 +366,7 @@ async def get_config(seg: SemanticSegmenter = Depends(get_segmenter)):
 @app.put("/config", response_model=ConfigResponse)
 async def update_config(
     request: ConfigRequest,
-    seg: SemanticSegmenter = Depends(get_segmenter)
+    seg: EnhancedSemanticSegmenter = Depends(get_segmenter)
 ):
     """更新配置"""
     try:
@@ -273,23 +374,25 @@ async def update_config(
         
         # 更新阈值
         if request.threshold is not None:
-            seg.set_threshold(request.threshold)
+            seg.default_config["threshold"] = request.threshold
             updated_fields.append("threshold")
         
         # 更新段落长度限制
         if request.min_paragraph_length is not None:
-            seg.min_paragraph_length = request.min_paragraph_length
+            seg.default_config["min_paragraph_length"] = request.min_paragraph_length
             updated_fields.append("min_paragraph_length")
         
         if request.max_paragraph_length is not None:
-            seg.max_paragraph_length = request.max_paragraph_length
+            seg.default_config["max_paragraph_length"] = request.max_paragraph_length
             updated_fields.append("max_paragraph_length")
         
         # 获取更新后的配置
         current_config = {
-            "threshold": seg.threshold,
-            "min_paragraph_length": seg.min_paragraph_length,
-            "max_paragraph_length": seg.max_paragraph_length
+            "threshold": seg.default_config.get("threshold"),
+            "min_paragraph_length": seg.default_config.get("min_paragraph_length"),
+            "max_paragraph_length": seg.default_config.get("max_paragraph_length"),
+            "window_size": seg.default_config.get("window_size"),
+            "use_structure_hints": seg.default_config.get("use_structure_hints")
         }
         
         message = f"成功更新配置: {', '.join(updated_fields)}" if updated_fields else "无配置更新"

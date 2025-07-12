@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, validator
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 
 
 class SegmentationRequest(BaseModel):
@@ -314,5 +314,144 @@ class ProcessingStatusResponse(BaseModel):
                 "message": "正在处理第3章节...",
                 "estimated_time": 45.2,
                 "result_available": False
+            }
+        }
+
+
+# 增强版分段相关模型
+
+class EnhancedSegmentationRequest(BaseModel):
+    """增强版语义分段请求模型"""
+    
+    text: str = Field(..., description="待分段的文本", min_length=1, max_length=20000)
+    threshold: Optional[float] = Field(
+        None, 
+        description="基础分段阈值(0.0-1.0)，会根据文本类型自动调整", 
+        ge=0.0, 
+        le=1.0
+    )
+    enable_auto_threshold: Optional[bool] = Field(
+        None,
+        description="是否启用自动阈值调整"
+    )
+    enable_structure_hints: Optional[bool] = Field(
+        None,
+        description="是否启用结构提示检测(如标题、列表等)"
+    )
+    enable_hierarchical_output: Optional[bool] = Field(
+        None,
+        description="是否启用层次化输出格式"
+    )
+    force_text_type: Optional[str] = Field(
+        None,
+        description="强制指定文本类型: technical/novel/academic/news/dialogue"
+    )
+    
+    @validator('text')
+    def validate_text(cls, v):
+        """验证文本内容"""
+        if not v or not v.strip():
+            raise ValueError("文本内容不能为空")
+        return v.strip()
+    
+    @validator('force_text_type')
+    def validate_text_type(cls, v):
+        """验证文本类型"""
+        if v is not None:
+            valid_types = ['technical', 'novel', 'academic', 'news', 'dialogue', 'mixed']
+            if v not in valid_types:
+                raise ValueError(f"文本类型必须是以下之一: {', '.join(valid_types)}")
+        return v
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "text": "人工智能技术发展迅速。机器学习是其核心分支。深度学习通过神经网络进行学习。Python是常用的编程语言。它具有简洁的语法特点。",
+                "threshold": 0.5,
+                "enable_auto_threshold": True,
+                "enable_structure_hints": True,
+                "enable_hierarchical_output": True,
+                "force_text_type": None
+            }
+        }
+
+
+class HierarchicalParagraph(BaseModel):
+    """层次化段落模型"""
+    
+    text: str = Field(..., description="段落文本内容")
+    type: str = Field(..., description="段落类型: content/title/list_item")
+    level: int = Field(..., description="层次级别")
+    length: int = Field(..., description="段落字符长度")
+    sentence_count: int = Field(..., description="包含的句子数量")
+    start_idx: int = Field(..., description="起始句子索引")
+    end_idx: int = Field(..., description="结束句子索引")
+    key_phrases: List[str] = Field(..., description="关键短语列表")
+
+
+class EnhancedQualityMetrics(BaseModel):
+    """增强版分段质量指标模型"""
+    
+    paragraph_count: int = Field(..., description="段落数量")
+    avg_length: float = Field(..., description="平均段落长度")
+    length_std: float = Field(..., description="段落长度标准差")
+    avg_sentence_count: float = Field(..., description="平均句子数量")
+    too_short_count: int = Field(..., description="过短段落数量")
+    too_long_count: int = Field(..., description="过长段落数量")
+    semantic_consistency: float = Field(..., description="语义一致性分数")
+    structure_score: float = Field(..., description="结构合理性分数")
+    type_distribution: Dict[str, int] = Field(..., description="段落类型分布")
+    quality_score: float = Field(..., description="综合质量分数")
+
+
+class EnhancedSegmentationResponse(BaseModel):
+    """增强版语义分段响应模型"""
+    
+    success: bool = Field(True, description="处理是否成功")
+    paragraphs: List[HierarchicalParagraph] = Field(..., description="层次化段落列表")
+    text_type: str = Field(..., description="检测到的文本类型")
+    type_confidence: float = Field(..., description="文本类型检测置信度")
+    config_used: Dict[str, Any] = Field(..., description="实际使用的配置")
+    sentence_count: int = Field(..., description="原始句子数量")
+    boundary_count: int = Field(..., description="检测到的边界数量")
+    multi_scale_info: Dict[str, int] = Field(..., description="多尺度分析信息")
+    quality: EnhancedQualityMetrics = Field(..., description="分段质量评估")
+    processing_time: float = Field(..., description="处理时间(秒)")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "paragraphs": [
+                    {
+                        "text": "人工智能技术发展迅速。机器学习是其核心分支。",
+                        "type": "content",
+                        "level": 1,
+                        "length": 24,
+                        "sentence_count": 2,
+                        "start_idx": 0,
+                        "end_idx": 2,
+                        "key_phrases": ["人工智能", "技术", "机器学习"]
+                    }
+                ],
+                "text_type": "technical",
+                "type_confidence": 0.85,
+                "config_used": {"threshold": 0.4, "window_size": 2},
+                "sentence_count": 5,
+                "boundary_count": 2,
+                "multi_scale_info": {"scale_1": 4, "scale_3": 3, "scale_5": 1},
+                "quality": {
+                    "paragraph_count": 2,
+                    "avg_length": 45.5,
+                    "length_std": 12.3,
+                    "avg_sentence_count": 2.5,
+                    "too_short_count": 0,
+                    "too_long_count": 0,
+                    "semantic_consistency": 0.75,
+                    "structure_score": 0.90,
+                    "type_distribution": {"content": 2},
+                    "quality_score": 0.82
+                },
+                "processing_time": 0.245
             }
         }
