@@ -6,8 +6,8 @@ class Settings(BaseSettings):
     """应用配置"""
     
     # 服务配置
-    app_name: str = "BERT语义分段服务"
-    app_version: str = "0.1.0"
+    app_name: str = "增强版语义分段服务"
+    app_version: str = "0.1.1"
     host: str = "0.0.0.0"
     port: int = 8000
     debug: bool = False
