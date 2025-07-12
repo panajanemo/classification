@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BERT语义分段服务 - Markdown文件处理</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .upload-section {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border: 2px dashed #dee2e6;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .upload-section:hover {
+            border-color: #4facfe;
+            background: #f0f8ff;
+        }
+
+        .upload-section.dragover {
+            border-color: #4facfe;
+            background: #e6f3ff;
+            transform: scale(1.02);
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .upload-button {
+            display: inline-block;
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 15px;
+        }
+
+        .upload-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(79, 172, 254, 0.4);
+        }
+
+        .settings {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .setting-group {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .setting-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #495057;
+        }
+
+        .setting-group input, .setting-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            font-size: 1em;
+        }
+
+        .setting-group input:focus, .setting-group select:focus {
+            outline: none;
+            border-color: #4facfe;
+            box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
+
+        .process-button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.2em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 20px;
+        }
+
+        .process-button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(17, 153, 142, 0.4);
+        }
+
+        .process-button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+
+        .progress-section {
+            display: none;
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: #e9ecef;
+            border-radius: 5px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4facfe, #00f2fe);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .result-section {
+            display: none;
+            margin-top: 30px;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .download-button {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .download-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 3px 10px rgba(255, 107, 107, 0.4);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #4facfe;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: #4facfe;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+
+        .result-content {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            max-height: 500px;
+            overflow-y: auto;
+            padding: 20px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.9em;
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #f5c6cb;
+            margin-top: 15px;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #4facfe;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .file-info {
+            display: none;
+            margin-top: 15px;
+            padding: 15px;
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            border-radius: 6px;
+            color: #155724;
+        }
+
+        @media (max-width: 768px) {
+            .content {
+                padding: 20px;
+            }
+            
+            .settings {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧠 BERT语义分段服务</h1>
+            <p>智能Markdown文档语义分段处理 | 基于MPS加速的BERT模型</p>
+        </div>
+
+        <div class="content">
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="upload-section" id="uploadSection">
+                    <div>
+                        <button type="button" class="upload-button" onclick="document.getElementById('fileInput').click()">
+                            📁 选择Markdown文件
+                        </button>
+                        <input type="file" id="fileInput" class="file-input" accept=".md,.markdown" required>
+                        <p style="margin-top: 10px; color: #6c757d;">
+                            支持 .md 和 .markdown 文件，最大50MB<br>
+                            或拖拽文件到此区域
+                        </p>
+                    </div>
+                    
+                    <div class="file-info" id="fileInfo">
+                        <strong>已选择文件：</strong><span id="fileName"></span><br>
+                        <strong>文件大小：</strong><span id="fileSize"></span>
+                    </div>
+                </div>
+
+                <div class="settings">
+                    <div class="setting-group">
+                        <label for="threshold">分段阈值</label>
+                        <input type="range" id="threshold" name="threshold" min="0.1" max="0.9" step="0.1" value="0.5">
+                        <small style="color: #6c757d;">当前值: <span id="thresholdValue">0.5</span> (值越小分段越细)</small>
+                    </div>
+
+                    <div class="setting-group">
+                        <label for="chunkSize">分块大小</label>
+                        <select id="chunkSize" name="chunk_size">
+                            <option value="3000">小文件 (3K)</option>
+                            <option value="5000" selected>中等文件 (5K)</option>
+                            <option value="8000">大文件 (8K)</option>
+                            <option value="12000">超大文件 (12K)</option>
+                        </select>
+                        <small style="color: #6c757d;">影响处理速度和内存使用</small>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="preserveStructure" name="preserve_structure" checked>
+                            <label for="preserveStructure">保持Markdown结构</label>
+                        </div>
+                        <small style="color: #6c757d;">保留标题、列表、代码块等格式</small>
+                    </div>
+                </div>
+
+                <button type="submit" class="process-button" id="processButton">
+                    🚀 开始处理
+                </button>
+            </form>
+
+            <div class="progress-section" id="progressSection">
+                <h3>处理进度</h3>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <p id="progressText">准备处理...</p>
+            </div>
+
+            <div class="result-section" id="resultSection">
+                <div class="result-header">
+                    <h3>处理结果</h3>
+                    <button class="download-button" id="downloadButton">
+                        💾 下载处理后的文件
+                    </button>
+                </div>
+
+                <div class="stats-grid" id="statsGrid">
+                    <!-- 统计信息将在这里动态生成 -->
+                </div>
+
+                <h4 style="margin-bottom: 10px;">处理后的Markdown内容：</h4>
+                <div class="result-content" id="resultContent">
+                    <!-- 处理结果将在这里显示 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 全局变量
+        let currentFile = null;
+        let processedResult = null;
+
+        // DOM 元素
+        const uploadForm = document.getElementById('uploadForm');
+        const uploadSection = document.getElementById('uploadSection');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        const fileSize = document.getElementById('fileSize');
+        const thresholdSlider = document.getElementById('threshold');
+        const thresholdValue = document.getElementById('thresholdValue');
+        const processButton = document.getElementById('processButton');
+        const progressSection = document.getElementById('progressSection');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const resultSection = document.getElementById('resultSection');
+        const statsGrid = document.getElementById('statsGrid');
+        const resultContent = document.getElementById('resultContent');
+        const downloadButton = document.getElementById('downloadButton');
+
+        // 事件监听器
+        thresholdSlider.addEventListener('input', function() {
+            thresholdValue.textContent = this.value;
+        });
+
+        fileInput.addEventListener('change', handleFileSelect);
+
+        // 拖拽上传
+        uploadSection.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            this.classList.add('dragover');
+        });
+
+        uploadSection.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            this.classList.remove('dragover');
+        });
+
+        uploadSection.addEventListener('drop', function(e) {
+            e.preventDefault();
+            this.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                handleFileSelect({ target: fileInput });
+            }
+        });
+
+        uploadForm.addEventListener('submit', handleFormSubmit);
+        downloadButton.addEventListener('click', downloadResult);
+
+        // 文件选择处理
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            currentFile = file;
+            
+            // 验证文件类型
+            const allowedTypes = ['.md', '.markdown'];
+            const fileExt = '.' + file.name.split('.').pop().toLowerCase();
+            
+            if (!allowedTypes.includes(fileExt)) {
+                alert('请选择 .md 或 .markdown 文件！');
+                fileInput.value = '';
+                return;
+            }
+
+            // 显示文件信息
+            fileName.textContent = file.name;
+            fileSize.textContent = formatFileSize(file.size);
+            fileInfo.style.display = 'block';
+            
+            // 重置结果区域
+            resultSection.style.display = 'none';
+            progressSection.style.display = 'none';
+        }
+
+        // 表单提交处理
+        async function handleFormSubmit(event) {
+            event.preventDefault();
+            
+            if (!currentFile) {
+                alert('请先选择文件！');
+                return;
+            }
+
+            // 显示进度
+            showProgress();
+            setProgress(0, '准备上传文件...');
+
+            try {
+                // 构建表单数据
+                const formData = new FormData();
+                formData.append('file', currentFile);
+                formData.append('threshold', thresholdSlider.value);
+                formData.append('chunk_size', document.getElementById('chunkSize').value);
+                formData.append('preserve_structure', document.getElementById('preserveStructure').checked);
+
+                setProgress(10, '正在上传文件...');
+
+                // 发送请求
+                const response = await fetch('/upload-markdown', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                setProgress(30, '正在处理文件...');
+
+                if (!response.ok) {
+                    throw new Error(`HTTP错误: ${response.status}`);
+                }
+
+                const result = await response.json();
+                
+                setProgress(100, '处理完成！');
+                
+                setTimeout(() => {
+                    hideProgress();
+                    showResult(result);
+                }, 500);
+
+            } catch (error) {
+                console.error('处理失败:', error);
+                hideProgress();
+                showError('处理失败: ' + error.message);
+            }
+        }
+
+        // 显示进度
+        function showProgress() {
+            processButton.disabled = true;
+            processButton.innerHTML = '<span class="loading"></span> 处理中...';
+            progressSection.style.display = 'block';
+            resultSection.style.display = 'none';
+        }
+
+        // 设置进度
+        function setProgress(percent, message) {
+            progressFill.style.width = percent + '%';
+            progressText.textContent = message;
+        }
+
+        // 隐藏进度
+        function hideProgress() {
+            processButton.disabled = false;
+            processButton.innerHTML = '🚀 开始处理';
+            progressSection.style.display = 'none';
+        }
+
+        // 显示结果
+        function showResult(result) {
+            if (!result.success) {
+                showError(result.error || '处理失败');
+                return;
+            }
+
+            processedResult = result;
+            resultSection.style.display = 'block';
+
+            // 显示统计信息
+            showStats(result);
+
+            // 显示处理后的内容
+            resultContent.textContent = result.processed_markdown;
+
+            // 滚动到结果区域
+            resultSection.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // 显示统计信息
+        function showStats(result) {
+            const stats = [
+                { label: '文件大小', value: formatFileSize(result.file_size) },
+                { label: '处理时间', value: result.processing_time.toFixed(2) + 's' },
+                { label: '原始段落', value: result.original_stats.paragraphs.count },
+                { label: '处理后段落', value: result.processed_stats.paragraphs.count },
+                { label: '标题数量', value: result.processed_stats.headings.count },
+                { label: '代码块', value: result.processed_stats.code_blocks },
+                { label: '列表', value: result.processed_stats.lists },
+                { label: '质量分数', value: (result.processing_info.segmentation_applied ? '✅ 已优化' : '📝 保持原样') }
+            ];
+
+            statsGrid.innerHTML = stats.map(stat => `
+                <div class="stat-card">
+                    <div class="stat-value">${stat.value}</div>
+                    <div class="stat-label">${stat.label}</div>
+                </div>
+            `).join('');
+        }
+
+        // 显示错误
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+            
+            // 移除之前的错误消息
+            const existingError = document.querySelector('.error-message');
+            if (existingError) {
+                existingError.remove();
+            }
+            
+            uploadForm.appendChild(errorDiv);
+        }
+
+        // 下载结果
+        function downloadResult() {
+            if (!processedResult) return;
+
+            const blob = new Blob([processedResult.processed_markdown], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            
+            a.href = url;
+            a.download = 'processed_' + (processedResult.filename || 'document.md');
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // 格式化文件大小
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html>

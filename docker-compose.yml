@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  semantic-segmentation:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - SEMANTIC_DEBUG=false
+      - SEMANTIC_HOST=0.0.0.0
+      - SEMANTIC_PORT=8000
+      - SEMANTIC_DEVICE=cpu
+    volumes:
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
