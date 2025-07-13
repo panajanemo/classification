@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     
     # 服务配置
     app_name: str = "增强版语义分段服务"
-    app_version: str = "0.1.1"
+    app_version: str = "0.1.2"    
     host: str = "0.0.0.0"
     port: int = 8000
     debug: bool = False
@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     model_cache_dir: Optional[str] = None
     max_length: int = 512
     use_enhanced_segmenter: bool = True  # 是否使用增强版分段器
+    
+    # Transformer²分段配置
+    use_transformer_segmenter: bool = True  # 启用Transformer²分段器
+    default_segmentation_method: str = "auto"  # 默认分段方法 (enhanced/transformer/hybrid/auto)
     
     # 分段配置
     threshold: float = 0.5

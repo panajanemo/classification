@@ -7,6 +7,7 @@ from scipy.ndimage import gaussian_filter1d
 from src.core.sentence_transformer_model import SentenceTransformerModel
 from src.core.text_type_detector import TextTypeDetector, TextType
 from src.utils.text_processor import TextProcessor
+from src.utils.chinese_optimizer import apply_chinese_optimizations
 from config.settings import settings
 
 
@@ -31,6 +32,9 @@ class EnhancedSemanticSegmenter:
         self.model = model or SentenceTransformerModel()
         self.text_processor = text_processor or TextProcessor()
         self.type_detector = type_detector or TextTypeDetector()
+        
+        # 应用中文优化
+        self.text_processor = apply_chinese_optimizations(self.text_processor)
         
         # 默认配置
         self.default_config = {
@@ -62,9 +66,9 @@ class EnhancedSemanticSegmenter:
         return smoothed
     
     def _find_semantic_valleys(self, similarities: np.ndarray, 
-                             threshold: float, min_distance: int = 2) -> List[int]:
+                             threshold: float, min_distance: int = 1) -> List[int]:
         """
-        找到语义相似度的"谷底"作为分段点
+        找到语义相似度的"谷底"作为分段点 - 改进版
         
         Args:
             similarities: 相似度数组
@@ -74,29 +78,51 @@ class EnhancedSemanticSegmenter:
         Returns:
             分段点位置列表
         """
-        # 反转相似度以找到谷底（相似度低的地方）
-        inverted_similarities = 1 - similarities
-        
-        # 找到低于阈值的所有点
-        below_threshold = similarities < threshold
-        threshold_indices = np.where(below_threshold)[0]
-        
-        if len(threshold_indices) == 0:
+        if len(similarities) == 0:
             return []
         
-        # 使用峰值检测算法找到局部最小值
-        try:
-            peaks, _ = find_peaks(inverted_similarities, 
-                                distance=min_distance,
-                                height=1-threshold)
-            
-            # 只返回确实低于阈值的峰值
-            valid_peaks = [p for p in peaks if similarities[p] < threshold]
-            return valid_peaks
-            
-        except Exception as e:
-            logger.warning(f"峰值检测失败，使用简单阈值方法: {e}")
-            return threshold_indices.tolist()
+        # 方法1：找到局部最小值（不使用阈值限制）
+        valleys = []
+        
+        # 使用简单的局部最小值检测
+        for i in range(1, len(similarities) - 1):
+            # 检查是否为局部最小值
+            if (similarities[i] < similarities[i-1] and 
+                similarities[i] < similarities[i+1]):
+                valleys.append(i)
+        
+        # 方法2：添加显著下降点
+        significant_drops = []
+        for i in range(1, len(similarities)):
+            # 计算相对下降幅度
+            if similarities[i-1] > 0:  # 避免除零
+                drop_ratio = (similarities[i-1] - similarities[i]) / similarities[i-1]
+                if drop_ratio > 0.15:  # 15%以上的下降视为显著
+                    significant_drops.append(i)
+        
+        # 方法3：使用阈值过滤
+        below_threshold = []
+        if threshold > 0:
+            below_threshold = np.where(similarities < threshold)[0].tolist()
+        
+        # 合并所有候选边界
+        all_candidates = set(valleys + significant_drops + below_threshold)
+        
+        # 按位置排序并应用最小距离过滤
+        candidates = sorted(list(all_candidates))
+        if min_distance <= 1:
+            return candidates
+        
+        # 应用最小距离过滤
+        filtered = []
+        last_pos = -min_distance
+        for pos in candidates:
+            if pos - last_pos >= min_distance:
+                filtered.append(pos)
+                last_pos = pos
+        
+        logger.debug(f"边界检测: 局部最小值={len(valleys)}, 显著下降={len(significant_drops)}, 阈值过滤={len(below_threshold)}, 最终={len(filtered)}")
+        return filtered
     
     def _calculate_multi_scale_similarities(self, embeddings: np.ndarray, 
                                           scales: List[int] = [1, 3, 5]) -> Dict[str, np.ndarray]:
@@ -162,16 +188,17 @@ class EnhancedSemanticSegmenter:
         Returns:
             最终分段边界列表
         """
-        # 根据文本类型调整权重和阈值
+        # 根据文本类型调整权重和阈值（降低阈值，提高敏感度）
         scale_configs = {
-            TextType.TECHNICAL: {"scale_1": (0.3, 0.85), "scale_3": (0.5, 0.8), "scale_5": (0.2, 0.75)},
-            TextType.NOVEL: {"scale_1": (0.2, 0.7), "scale_3": (0.3, 0.65), "scale_5": (0.5, 0.6)},
-            TextType.ACADEMIC: {"scale_1": (0.4, 0.8), "scale_3": (0.4, 0.75), "scale_5": (0.2, 0.7)},
-            TextType.NEWS: {"scale_1": (0.4, 0.8), "scale_3": (0.4, 0.75), "scale_5": (0.2, 0.7)},
-            TextType.DIALOGUE: {"scale_1": (0.6, 0.75), "scale_3": (0.3, 0.7), "scale_5": (0.1, 0.65)},
+            TextType.TECHNICAL: {"scale_1": (0.4, 0.75), "scale_3": (0.4, 0.7), "scale_5": (0.2, 0.65)},
+            TextType.NOVEL: {"scale_1": (0.3, 0.6), "scale_3": (0.4, 0.55), "scale_5": (0.3, 0.5)},
+            TextType.ACADEMIC: {"scale_1": (0.4, 0.7), "scale_3": (0.4, 0.65), "scale_5": (0.2, 0.6)},
+            TextType.NEWS: {"scale_1": (0.4, 0.7), "scale_3": (0.4, 0.65), "scale_5": (0.2, 0.6)},
+            TextType.DIALOGUE: {"scale_1": (0.5, 0.65), "scale_3": (0.3, 0.6), "scale_5": (0.2, 0.55)},
+            TextType.MIXED: {"scale_1": (0.4, 0.6), "scale_3": (0.4, 0.55), "scale_5": (0.2, 0.5)},  # 新增混合类型
         }
         
-        configs = scale_configs.get(text_type, {"scale_1": (0.4, 0.75), "scale_3": (0.4, 0.7), "scale_5": (0.2, 0.65)})
+        configs = scale_configs.get(text_type, {"scale_1": (0.4, 0.65), "scale_3": (0.4, 0.6), "scale_5": (0.2, 0.55)})
         
         # 收集所有候选边界及其强度
         boundary_scores = {}
@@ -200,8 +227,17 @@ class EnhancedSemanticSegmenter:
                     boundary_strength = weight * (1 - smoothed_similarities[boundary])
                     boundary_scores[boundary] += boundary_strength
         
-        # 选择强度超过阈值的边界
-        min_score = 0.05  # 降低最小边界强度阈值
+        # 根据文本类型动态调整最小边界强度阈值
+        min_score_map = {
+            TextType.TECHNICAL: 0.08,
+            TextType.NOVEL: 0.03,      # 小说需要更敏感的分段
+            TextType.ACADEMIC: 0.06,
+            TextType.NEWS: 0.06,
+            TextType.DIALOGUE: 0.04,
+            TextType.MIXED: 0.02,      # 混合文本最敏感
+        }
+        
+        min_score = min_score_map.get(text_type, 0.04)
         selected_boundaries = [
             boundary for boundary, score in boundary_scores.items() 
             if score >= min_score
@@ -237,17 +273,29 @@ class EnhancedSemanticSegmenter:
             current_paragraph = " ".join(sentences[current_start:boundary])
             paragraph_length = len(current_paragraph)
             
-            # 长度检查
+            # 改进的长度检查逻辑
             if paragraph_length < config["min_paragraph_length"]:
-                # 段落太短，尝试跳过这个边界
-                continue
+                # 段落太短，检查是否为特殊情况
+                # 如果是混合文本或对话，允许更短的段落
+                if config.get("min_paragraph_length", 100) <= 50:
+                    # 对于允许短段落的类型，保留边界
+                    optimized.append(boundary)
+                else:
+                    # 其他情况才跳过边界
+                    continue
             elif paragraph_length > config["max_paragraph_length"]:
-                # 段落太长，在中间强制分割
-                mid_point = current_start + (boundary - current_start) // 2
-                if mid_point > current_start:
+                # 段落太长，智能分割
+                sentences_in_para = boundary - current_start
+                if sentences_in_para > 2:
+                    # 如果有多个句子，在中间分割
+                    mid_point = current_start + sentences_in_para // 2
                     optimized.append(mid_point)
+                # 无论如何都保留原边界
+                optimized.append(boundary)
+            else:
+                # 长度合适，直接保留
+                optimized.append(boundary)
             
-            optimized.append(boundary)
             current_start = boundary
         
         return optimized
@@ -350,9 +398,25 @@ class EnhancedSemanticSegmenter:
             if not self.text_processor.validate_input(text):
                 return {"error": "输入文本无效"}
             
-            # 检测文本类型
-            text_type, type_info = self.type_detector.detect_text_type(text)
-            logger.info(f"检测到文本类型: {text_type.value}")
+            # 检测文本类型或使用强制类型
+            if custom_config and custom_config.get("force_text_type"):
+                force_type_str = custom_config["force_text_type"]
+                # 将字符串转换为TextType枚举
+                type_mapping = {
+                    "technical": TextType.TECHNICAL,
+                    "novel": TextType.NOVEL,
+                    "academic": TextType.ACADEMIC,
+                    "news": TextType.NEWS,
+                    "dialogue": TextType.DIALOGUE,
+                    "mixed": TextType.MIXED,
+                    "unknown": TextType.UNKNOWN
+                }
+                text_type = type_mapping.get(force_type_str, TextType.UNKNOWN)
+                type_info = {"confidence": 1.0, "forced": True}
+                logger.info(f"强制使用文本类型: {text_type.value}")
+            else:
+                text_type, type_info = self.type_detector.detect_text_type(text)
+                logger.info(f"检测到文本类型: {text_type.value}")
             
             # 获取类型特定配置
             type_config = self.type_detector.get_segmentation_config(text_type)

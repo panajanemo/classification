@@ -53,8 +53,8 @@ async def lifespan(app: FastAPI):
         logger.info("正在预加载Sentence Transformer模型...")
         segmenter.model.load_model()
         
-        # 初始化分块处理器（暂时使用传统方式，后续可以适配增强版）
-        chunk_processor = ChunkProcessor(None)  # 需要后续适配
+        # 初始化分块处理器（使用增强版分段器）
+        chunk_processor = ChunkProcessor(segmenter)
         
         logger.info("增强版语义分段服务启动成功")
         yield
@@ -78,8 +78,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# 挂载静态文件
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# 挂载静态文件（如果目录存在）
+import os
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # 添加CORS中间件
 app.add_middleware(

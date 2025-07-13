@@ -40,8 +40,10 @@ class ChunkProcessor:
             segmenter: 语义分段器实例（暂时可为None，待适配增强版）
         """
         self.segmenter = segmenter
-        # self.markdown_processor = MarkdownProcessor(segmenter.text_processor)  # 暂时注释
-        self.markdown_processor = None  # 待适配
+        if segmenter is not None:
+            self.markdown_processor = MarkdownProcessor(segmenter.text_processor)
+        else:
+            self.markdown_processor = None
         self.tasks: Dict[str, ProcessingTask] = {}
         self.executor = ThreadPoolExecutor(max_workers=3)  # 限制并发数
         

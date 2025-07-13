@@ -115,6 +115,9 @@ class TextTypeDetector:
             r'^\s*\d+\.\s*[A-Z\u4e00-\u9fa5]+\s*[：:]\s*'  # 编号.姓名：对话格式
         ]
         
+        # 用于混合文本检测的临时变量
+        self._current_text = ""
+        
         logger.info("文本类型检测器初始化完成")
     
     def _count_keyword_matches(self, text: str, keywords: set) -> int:
@@ -252,6 +255,9 @@ class TextTypeDetector:
         if not text or len(text.strip()) < 50:
             return TextType.UNKNOWN, {"confidence": 0.0}
         
+        # 保存当前文本用于混合检测
+        self._current_text = text
+        
         # 计算各类型特征得分
         scores = {}
         
@@ -286,10 +292,15 @@ class TextTypeDetector:
         total_score = sum(scores.values())
         confidence = max_score / total_score if total_score > 0 else 0
         
+        # 检测混合文本的特殊逻辑
+        is_mixed = self._detect_mixed_text(scores, confidence)
+        
         # 根据得分和置信度确定类型
         if max_score < 1.0:  # 得分太低
             detected_type = TextType.UNKNOWN
-        elif confidence < 0.3:  # 置信度太低，可能是混合类型
+        elif is_mixed:  # 混合文本
+            detected_type = TextType.MIXED
+        elif confidence < 0.25:  # 置信度太低，也可能是混合类型
             detected_type = TextType.MIXED
         else:
             type_mapping = {
@@ -306,12 +317,56 @@ class TextTypeDetector:
             "confidence": confidence,
             "type_scores": scores,
             "max_score": max_score,
-            "structure_info": structure
+            "structure_info": structure,
+            "is_mixed": is_mixed
         }
         
-        logger.debug(f"检测到文本类型: {detected_type.value}, 置信度: {confidence:.3f}")
+        logger.debug(f"检测到文本类型: {detected_type.value}, 置信度: {confidence:.3f}, 混合: {is_mixed}")
         
         return detected_type, detailed_scores
+    
+    def _detect_mixed_text(self, scores: Dict[str, float], confidence: float) -> bool:
+        """
+        检测是否为混合文本
+        
+        Args:
+            scores: 各类型得分
+            confidence: 最高类型的置信度
+            
+        Returns:
+            是否为混合文本
+        """
+        # 排序得分
+        sorted_scores = sorted(scores.values(), reverse=True)
+        
+        if len(sorted_scores) < 2:
+            return False
+        
+        highest = sorted_scores[0]
+        second_highest = sorted_scores[1]
+        
+        # 如果前两个得分差距很小，可能是混合文本
+        if highest > 0 and second_highest / highest > 0.6:
+            return True
+        
+        # 如果有多个类型得分都较高，可能是混合文本
+        high_score_count = sum(1 for score in scores.values() if score > highest * 0.4)
+        if high_score_count >= 3:
+            return True
+        
+        # 特殊检测：如果最高分类型主要依赖结构特征而非关键词，且同时存在其他类型的关键词
+        max_type = max(scores, key=scores.get)
+        if max_type == "academic" and highest > 50:  # academic得分很高时
+            # 检查是否主要来自结构复杂度而非关键词
+            academic_keywords = self._count_keyword_matches(self._current_text, self.academic_keywords)
+            novel_keywords = self._count_keyword_matches(self._current_text, self.novel_keywords)
+            tech_keywords = self._count_keyword_matches(self._current_text, self.technical_keywords)
+            
+            # 如果academic关键词很少，但有其他类型关键词，可能是混合文本
+            if academic_keywords <= 1 and (novel_keywords > 0 or tech_keywords > 0):
+                return True
+        
+        return False
     
     def get_segmentation_config(self, text_type: TextType) -> Dict[str, float]:
         """
@@ -360,10 +415,10 @@ class TextTypeDetector:
                 "use_structure_hints": False
             },
             TextType.MIXED: {
-                "threshold": 0.5,           # 混合类型使用默认配置
-                "window_size": 3,
-                "min_paragraph_length": 100,
-                "max_paragraph_length": 500,
+                "threshold": 0.3,           # 混合类型需要更敏感的分段
+                "window_size": 2,           # 较小窗口，快速适应变化
+                "min_paragraph_length": 50,  # 允许更短的段落
+                "max_paragraph_length": 300, # 避免跨越不同主题
                 "use_structure_hints": False
             },
             TextType.UNKNOWN: {
